@@ -5,63 +5,116 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Download project from GitHub
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      # 2. Install Node.js for React
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # 3. Build React frontend
       - name: Build React frontend
         working-directory: frontend
         run: |
           npm ci
           npm run build
 
-      - name: Copy frontend build into backend
+      # 4. Copy React build into FastAPI backend
+      - name: Copy frontend build to backend
         run: |
           mkdir -p backend/dist
           cp -r frontend/dist/. backend/dist/
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-     
-      - name: Build and push backend image
-        uses: docker/build-push-action@v6
+      # 5. Log in to GitHub Container Registry
+      - name: Login to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
         with:
-          context: ./backend
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/try-backend:latest
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
+      # 6. Build backend Docker image
+      - name: Build Docker image
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}:latest"
+          IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
+          docker build -t "$IMAGE" ./backend
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # 7. Push image to GitHub Container Registry
+      - name: Push Docker image
+        if: github.event_name == 'push'
+        run: |
+          docker push "$IMAGE"
+
+      # 8. Deploy to Ubuntu server and create .env from GitHub Secrets
       - name: Deploy to Ubuntu server
+        if: github.event_name == 'push'
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: DB_HOST,DB_PORT,DB_NAME,DB_USER,DB_PASSWORD
           script: |
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/try-backend:latest
+            set -eu
 
+            PROJECT_DIR="/home/ubuntu/meena/try/backend"
+            ENV_FILE="$PROJECT_DIR/.env"
+
+            # Create server .env securely from GitHub Secrets
+            umask 077
+            printf 'DB_HOST=%s\nDB_PORT=%s\nDB_NAME=%s\nDB_USER=%s\nDB_PASSWORD=%s\n' \
+              "$DB_HOST" \
+              "$DB_PORT" \
+              "$DB_NAME" \
+              "$DB_USER" \
+              "$DB_PASSWORD" > "$ENV_FILE"
+
+            # Get latest Docker image
+            IMAGE="ghcr.io/${{ github.repository }}:latest"
+            IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
+
+            docker pull "$IMAGE"
+
+            # Replace the old backend container
             docker rm -f meena-backend-container || true
 
+            # Start the new backend container
             docker run -d \
               --name meena-backend-container \
               --restart unless-stopped \
               --network meena-network \
-              --env-file /home/ubuntu/meena/try/backend/.env \
+              --env-file "$ENV_FILE" \
               -p 9000:9000 \
-              ${{ secrets.DOCKERHUB_USERNAME }}/try-backend:latest
+              "$IMAGE"
 
+            # Show container status and recent logs
             docker ps
             docker logs --tail 50 meena-backend-container
