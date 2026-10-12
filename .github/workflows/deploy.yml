@@ -54,10 +54,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # 6. Build backend Docker image
+      
       - name: Build Docker image
         run: |
           IMAGE="ghcr.io/${{ github.repository }}:latest"
           IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
+
           docker build -t "$IMAGE" ./backend
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
@@ -65,7 +67,7 @@ jobs:
       - name: Push Docker image
         if: github.event_name == 'push'
         run: |
-          docker push "$IMAGE"
+            docker push "$IMAGE"
 
       # 8. Deploy to Ubuntu server and create .env from GitHub Secrets
       - name: Deploy to Ubuntu server
