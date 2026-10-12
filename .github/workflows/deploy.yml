@@ -1,0 +1,72 @@
+
+name: Build and Deploy Application
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build React frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Copy frontend build into backend
+        run: |
+          mkdir -p backend/dist
+          cp -r frontend/dist/. backend/dist/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/server-db-backend:latest
+
+      - name: Deploy to Ubuntu server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/server-db-backend:latest
+
+            docker rm -f meena-backend-container || true
+
+            docker run -d \
+              --name meena-backend-container \
+              --restart unless-stopped \
+              --network meena-network \
+              --env-file /home/ubuntu/meena/server-DB/backend/.env \
+              -p 9000:9000 \
+              ${{ secrets.DOCKERHUB_USERNAME }}/server-db-backend:latest
+
+            docker ps
+            docker logs --tail 50 meena-backend-container
