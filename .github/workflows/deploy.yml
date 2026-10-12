@@ -42,7 +42,7 @@ jobs:
         with:
           context: ./backend
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/server-db-backend:latest
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/try-backend:latest
 
       - name: Deploy to Ubuntu server
         uses: appleboy/ssh-action@v1.2.0
@@ -51,7 +51,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/server-db-backend:latest
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/try-backend:latest
 
             docker rm -f meena-backend-container || true
 
@@ -61,7 +61,7 @@ jobs:
               --network meena-network \
               --env-file /home/ubuntu/meena/try/backend/.env \
               -p 9000:9000 \
-              ${{ secrets.DOCKERHUB_USERNAME }}/server-db-backend:latest
+              ${{ secrets.DOCKERHUB_USERNAME }}/try-backend:latest
 
             docker ps
             docker logs --tail 50 meena-backend-container
